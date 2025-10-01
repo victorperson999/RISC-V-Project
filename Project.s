@@ -41,7 +41,11 @@ _start:
 
     # TODO: That's the base game! Now, pick a pair of enhancements and
     # consider how to implement them.
-	
+
+    # COMMENTS:
+    #1. Add a scoring system that rewards the player for collecting items.
+    #2. Introduce a time limit for each turn, increasing the game's difficulty.
+
 exit:
     li a7, 10
     ecall
