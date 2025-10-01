@@ -6,6 +6,13 @@ stick: .byte 0,0
 shadowMonster: .byte 0,0
 fearFactor: .byte 0
 
+startingPrompt .string "Welcome to the Haunted House!\n"
+                 .string "You are in a dark room. You can move using W (up), A (left), S (down), D (right).\n"
+                 .string "Find the match (M) and stick (T) to increase your fear factor.\n"
+                 .string "Avoid the shadow monster (X)!\n"
+                 .string "Press R to restart the game at any time.\n"
+                 .string "Good luck!\n\n"
+
 .text
 .global _start
 
@@ -43,8 +50,59 @@ _start:
     # consider how to implement them.
 
     # COMMENTS:
-    #1. Add a scoring system that rewards the player for collecting items.
-    #2. Introduce a time limit for each turn, increasing the game's difficulty.
+    # add needed methods first
+
+_main:
+    # main method where we run our code sequentially
+    li a7, 4
+    la a0, startingPrompt
+    ecall 
+
+    li a7, 8 # read string syscall
+    ecall
+
+
+
+
+
+    j exit
+
+_print_board:
+    # function to print the board
+    addi sp, sp, -16 # allocate stack space for 4 integers
+    la a0, gridsize  # load address of gridsize
+    lw a1, 0(a0)     # load width
+    lw a2, 1(a0)     # load height
+    # TODO: Print the game board using the loaded dimensions
+    ret
+
+# --- GAMEPLAY FUNCTIONS ---
+move_character:
+    # move the character based on user input of W, A, S, D and updates its current position (coordinates)
+    ret
+
+increase_fear_factor:
+    # increase the fear factor when the character picks up an item
+    ret
+
+increase_match_count:
+    # increase the match count when the character picks up a match
+    ret
+
+
+# messages to be printed on console
+invalid_move_message:
+    # print a message when the user makes an invalid move
+    ret
+
+increase_fear_factor_message:
+    # print a message when the fear factor increases
+    ret
+
+picked_up_match_message:
+    # print a message when the user picks up the match
+    ret
+
 
 exit:
     li a7, 10
