@@ -28,38 +28,41 @@
 # -----------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-# Macros: (RARS syscalls)
+# Macros:
 #------------------------------------------------------------------------------
+.macro PRINT_CHAR r
+    mv   a0, \r
+    li   a7, 11          # print_char
+    ecall
+.endm
+
+# print a zero-terminated string at label \addr
 .macro PRINT_STR addr
-    li a7, 4
-    la a0, \addr
+    la   a0, \addr
+    li   a7, 4           # print_string
     ecall
-.end_macro
+.endm
 
-.macro PRINT_CHAR reg
-    li a7, 11
-    mv a0, \reg
+# newline (just '\n'; if you want CRLF, print 13 then 10)
+.macro PRINT_NL
+    li   a0, 10
+    li   a7, 11
     ecall
-.end_macro
+.endm
 
-.macro PRINT_INT reg
-    li a7, 1
-    mv a0, \reg
+# print an integer in \r (decimal)
+.macro PRINT_INT r
+    mv   a0, \r
+    li   a7, 1           # print_int
     ecall
-.end_macro
+.endm
 
-.macro PRINT_NL reg
-    li a7, 11
-    li a0, 10
-    ecall
-.end_macro
-
+# blocking read of one character -> \dest
 .macro READ_CHAR dest
-    li a7, 12
+    li   a7, 12          # read_char
     ecall
-    mv \dest a0
-.end_macro
-
+    mv   \dest, a0
+.endm
 # Game state 
 .data
 gridsize: .byte 8,8
@@ -78,22 +81,16 @@ fearFactor: .byte 0
 has_match: .byte 0
 candle_lit: .byte 0
 
+.align 2
+
 # RNG state (xorshift 32)
 rand_state: .word 2463534242 # default seed to use xorshift 32
 
 # UI strings
-welcome_msg: .asciz "Welcome to the Haunted house!\n"
-                .asciz "You are in a dark room. You can move using W (up), A (left), S (down), D (right).\n"
-                .asciz "Press R to restart, Q to quit.\n"
-                .asciz "Light the candle (C) using the match (M)\n"
-                .asciz "Avoid the shadow monster (X)!\n"
-                .asciz "Your fear factor increases by 10 when a shadow monster gets adjacent.\n"
-                .asciz "Once your fear factor = 100, the Game is Over\n"
-                .asciz "Good luck!\n\n"
-                .asciz
-status_prefix: .asciz "Status: Fear="
-status_mid1: .asciz "Match="
-status_mid2: .asciz "Candle="
+welcome_msg: .asciz "Welcome to the Haunted house!\nYou are in a dark room. You can move using W (up), A (left), S (down), D (right).\nPress R to restart, Q to quit.\nLight the candle (C) using the match (M)\nAvoid the shadow monster (X)!\nYour fear factor increases by 10 when a shadow monster gets adjacent.\nOnce your fear factor = 100, the Game is Over\nGood luck!\n\n"
+status_prefix: .asciz "Status: Fear = "
+status_mid1: .asciz ", Match = "
+status_mid2: .asciz ", Candle = "
 status_lit: .asciz "lit"
 status_unlit: .asciz "unlit"
 msg_invalid: .asciz "Cannot move there (Wall)\n"
@@ -102,15 +99,27 @@ msg_lit: .asciz "Candle lit! You have gotten rid of the shadows. Congradulations
 msg_fear: .asciz "A Shadow Monster was next to you - Your fear increases by 10\n"
 msg_over: .asciz "Your fear reached 100. Game over\n"
 msg_restart: .asciz "Restarting game ...\n\n"
+msg_final_board: .asciz "Final board state:\n"
+msg_user_pressed_quit: .asciz "User has requested to quit (Q) the game. Thanks for playing!\n"
 
+#----debug
+.dbgP: .asciz "DBG P: "
+.dbgM: .asciz "DBG M: "
+.dbgC: .asciz "DBG C: "
+.dbgX: .asciz "DBG X: "
+#-------------------
 # 1 byte scratch buffer for printing visual characters
 ch_buf: .byte 0
 
 
 .text
-.global _start
-
+.global main
 _start:
+	j main
+main:
+	li t0, '>'
+    PRINT_CHAR t0
+    PRINT_NL
     # TODO: Generate locations for the character, match, stick, and shadow monster.
 	# Static locations in memory have been provided for the (x, y) coordinates 
     # of each of these elements.
@@ -149,6 +158,76 @@ _start:
     sw ra, 12(sp)
     jal ra, seed_from_time
     jal ra, init_game
+	
+	# ---------- DEBUG DUMP (remove after fixing) ----------
+    PRINT_STR status_prefix
+    la   t2, fearFactor
+    lbu  t0, 0(t2)
+    PRINT_INT t0
+
+    PRINT_STR status_mid1
+    la   t2, has_match
+    lbu  t0, 0(t2)
+    PRINT_INT t0
+
+    PRINT_STR status_mid2
+    la   t2, candle_lit
+    lbu  t0, 0(t2)
+    beqz t0, 1f
+    PRINT_STR status_lit
+    j    2f
+1:  PRINT_STR status_unlit
+2:  PRINT_NL
+
+    # P(x y)
+    PRINT_STR .dbgP
+    la   t2, player_x
+    lbu  t0, 0(t2)
+    PRINT_INT t0
+    li   t3, ' '
+    PRINT_CHAR t3
+    la   t2, player_y
+    lbu  t0, 0(t2)
+    PRINT_INT t0
+    PRINT_NL
+
+    # M(x y)
+    PRINT_STR .dbgM
+    la   t2, match_x
+    lbu  t0, 0(t2)
+    PRINT_INT t0
+    li   t3, ' '
+    PRINT_CHAR t3
+    la   t2, match_y
+    lbu  t0, 0(t2)
+    PRINT_INT t0
+    PRINT_NL
+
+    # C(x y)
+    PRINT_STR .dbgC
+    la   t2, candle_x
+    lbu  t0, 0(t2)
+    PRINT_INT t0
+    li   t3, ' '
+    PRINT_CHAR t3
+    la   t2, candle_y
+    lbu  t0, 0(t2)
+    PRINT_INT t0
+    PRINT_NL
+
+    # X(x y)
+    PRINT_STR .dbgX
+    la   t2, monster_x
+    lbu  t0, 0(t2)
+    PRINT_INT t0
+    li   t3, ' '
+    PRINT_CHAR t3
+    la   t2, monster_y
+    lbu  t0, 0(t2)
+    PRINT_INT t0
+    PRINT_NL
+    PRINT_NL
+    # ------------------------------------------------------
     PRINT_STR welcome_msg
     jal ra, draw_board_and_status
     jal ra, game_loop
@@ -162,108 +241,150 @@ _start:
 # ------------------------------------------------------------------------------------------
 # init_game - (re) initialize the state, make sure to spawn the entities without overlapping
 #-------------------------------------------------------------------------------------------
-_globl init_game:
-    addi sp, sp, -16
-    sw ra, 12(sp)
+.globl init_game
+
+init_game:
+    addi sp, sp, -24
+    sw ra, 20(sp)
+	sw s0, 16(sp)
+	sw s1, 12(sp) # candidate x
+	sw s2, 8(sp) # candidate y
 
     # Reset the flags and clear
     li t0, 0
-    sb t0, fearFactor
-    sb t0, has_match
-    sb t0, candle_lit
+	la s0, fearFactor
+    sb t0, 0(s0)
+    la s0, has_match
+	sb t0, 0(s0)
+	la s0, candle_lit
+    sb t0, 0(s0)
 
     # width (t4), and height (t5)
-    lbu t4, gridsize
-    lbu t5, gridsize + 1
+	la s0, gridsize
+    lbu t4, 0(s0)
+	la s0, gridsize+1
+    lbu t5, 0(s0)
 
     # place the player
-1:  mv t0, t4
+1:  mv a0, t4
     jal ra, rand_bounded # a0 <-- 0,...,w-1
-    sb a0, player_x
+	la s0, player_x
+    sb a0, 0(s0)
     mv a0, t5
     jal ra, rand_bounded
-    sb a0, player_y
+	la s0, player_y
+    sb a0, 0(s0)
 
     # place the match (cannot be on the player)
 2:  mv a0, t4
     jal ra, rand_bounded
-    mv t0, a0
+    mv s1, a0 # x
     mv a0, t5
     jal ra, rand_bounded
-    mv t1, 
+    mv s2, a0 # y
     # compare with player position
-    lbu t2, player_x
-    lbu t3, player_y
-    bne t0, t2, 3f
-    bne t1, t3, 3f
-    j 2b # overlap, retry
-3:  sb t0, match_x
-    sb t1, match_y
+	la s0, player_x
+    lbu t2, 0(s0)
+	la s0, player_y
+    lbu t3, 0(s0)
+    beq s1, t2, 2b
+	beq s2, t3, 2b
+
+	la s0, match_x
+	sb s1, 0(s0)
+	la s0, match_y
+    sb s2, 0(s0)
 
     # place the candle (cannot be on player or match)
-4:  mv t0, t4
+4:  mv a0, t4
     jal ra, rand_bounded
-    mv t0, a0
+    mv s1, a0	# candidate x
     mv a0, t5
     jal ra, rand_bounded
-    mv t1, a0
+    mv s2, a0
+	#vs player
+	la s0, player_x
+    lbu t2, 0(s0)
+	la s0, player_y
+    lbu t3, 0(s0)
+    beq s1, t2, 4b
+    beq s2, t3, 4b
+	#vs match
+	la s0, match_x
+    lbu t2, 0(s0)
+	la s0, match_y
+    lbu t3, 0(s0)
+    beq s1, t2, 4b
+    beq s2, t3, 4b
+	
+	la s0, candle_x
+    sb s1, 0(s0)
+	la s0, candle_y
+    sb s2, 0(s0)
 
-    lbu t2, player_x
-    lbu t3, player_y
-    beq t0, t2, 4b
-    beq t1, t3, 4b
-
-    lbu t2, match_x
-    lbu t3, match_y
-    beq t0, t2, 4b
-    beq t1, t3, 4b
-
-    sb t0, candle_x
-    sb t1, candle_y
-
-    # place the shadow monster
+    # place the shadow monster (cannot be on player/match/candle)
 5:
-    mv t0, a4
+    mv a0, t4
     jal ra, rand_bounded
-    mv t0, a0
+    mv s1, a0 	# candidate mx
     mv a0, t5
     jal ra, rand_bounded
-    mv t1, a0
+    mv s2, a0	# candidate my
     #check vs player
-    lbu t2, player_x
-    lbu t3, player_y
-    beq t0, t2, 5b
-    beq t1, t3, 5b
+	la s0, player_x
+    lbu t2, 0(s0)
+	la s0, player_y
+    lbu t3, 0(s0)
+    beq s1, t2, 5b
+    beq s2, t3, 5b
     # check vs match
-    lbu t2, match_x
-    lbu t3, match_y
-    beq t0, t2, 5b
-    beq t1, t3, 5b
+	la s0, match_x
+    lbu t2, 0(s0)
+	la s0, match_y
+    lbu t3, 0(s0)
+    beq s1, t2, 5b
+    beq s2, t3, 5b
     #check vs candle
-    lbu t2, candle_x
-    lbu t3, candle_y
-    beq t0, t2, 5b
-    beq t1, t3, 5b
-
-    sb t0, monster_x
-    sb t1, monster_y
-
-    lw ra, 12(sp)
-    addi sp, sp, 16
+	la s0, candle_x
+    lbu t2, 0(s0)
+	la s0, candle_y
+    lbu t3, 0(s0)
+    beq s1, t2, 5b
+    beq s2, t3, 5b
+	
+	la s0, monster_x
+    sb s1, 0(s0)
+	la s0, monster_y
+    sb s2, 0(s0)
+	
+	lw s2, 8(sp)
+	lw s1, 12(sp)
+	lw s0, 16(sp)
+    lw ra, 20(sp)
+    addi sp, sp, 24
     ret
 
 #---------------------------------------------------------------
 # game_loop: process inputs, update the world, render the world
 #---------------------------------------------------------------
-.globl game_loop:
+.globl game_loop
 
 game_loop:
-    addi sp, sp, -32 # allocate 8 spaces in stack
-    sw ra, 28(sp)
+    addi sp, sp, -48 # allocate 8 spaces in stack
+    sw ra, 44(sp)
+	sw s1, 40(sp)
+	sw s2, 36(sp)
 
 .loop:
     # read a keystroke
     READ_CHAR t0
+	#move to fresh line after printing anything else (before printing new board and prompt on terminal)
+	li a0, 13 # '\r'
+	li a7, 11 # print char
+	ecall
+	li a0, 10 # '\n'
+	li a7, 11
+	ecall
 
     # normalize into upper case if a...z
     li t1, 'a'
@@ -307,7 +428,19 @@ game_loop:
 5:  # attempt the player move
     jal ra, try_move_player
     beqz t3, .invalid
+	
+	# if the candle is already lit, we won, terminate program
+	la t4, candle_lit
+	lbu t1, 0(t4)
+	beqz t1, .skip_win
+	
+	# show the board status one more time
+	PRINT_STR msg_final_board
+	jal  ra, draw_board_and_status
+    li   a7, 10
+    ecall
 
+.skip_win:
     # after the player move, move monster 1 step closer
     jal ra, monster_step_towards_player
 
@@ -329,8 +462,11 @@ game_loop:
     j .loop
 
 .quit:
-    lw ra 28(sp)
-    addi sp, sp, 32
+	PRINT_STR msg_user_pressed_quit
+	lw s2, 36(sp)
+	lw s1, 40(sp)
+    lw ra, 44(sp)
+    addi sp, sp, 48
     ret
 
 #-------------------------------------------------------------------
@@ -338,66 +474,84 @@ game_loop:
 #   returns t3 = 1 if moved, otherwise
 #   also handles pickup and candle lighting (with printed messages)
 # ------------------------------------------------------------------
-.globl try_move_player:
+.globl try_move_player
 
 try_move_player:
     addi sp, sp, -32 # allocate 8 spaces again
     sw ra, 28(sp)
+	sw s0, 24(sp)
 
     # load dimensions (again)
-    lbu t0, gridsize # width
-    lbu t1, grisize+1 # height
+	la s0, gridsize
+    lbu t0, 0(s0) # width
+	la s0, gridsize+1
+    lbu t1, 0(s0) # height
 
     # current position
-    lbu t4, player_x
-    lbu t5, player_y
+	la s0, player_x
+    lbu t4, 0(s0)
+	la s0, player_y
+    lbu t5, 0(s0)
 
     # new position = old + delta(check that 0...w-1, 0...h-1)
     add t6, t4, s1 # newx
-    add t7, t5, s2 # newy
+    add a5, t5, s2 # newy
 
     # check that 0<=newx<=w
     bltz t6, .blocked
-    bltz t7, .blocked
+    bltz a5, .blocked
     bge t6, t0, .blocked
-    bge t7, t1, .blocked
+    bge a5, t1, .blocked
 
     # commit the move
     mv t3, zero
-    sb t6, player_x
-    sb t7, player_y
+	la s0, player_x
+    sb t6, 0(s0)
+	la s0, player_y
+    sb a5, 0(s0)
     li t3, 1 # moved
 
     # pickup the match if present and not already holding it
-    lbu t2, has_match
+	la s0, has_match
+    lbu t2, 0(s0)
     bnez t2, 1f
-
-    lbu t0, match_x
-    lbu t1, match_y
+	
+	la s0, match_x
+    lbu t0, 0(s0)
+	la s0, match_y
+    lbu t1, 0(s0)
     bne t6, t0, 1f
-    bne t7, t1, 1f
+    bne a5, t1, 1f
 
     li t2, 1
-    sb t2, has_match
+	la s0, has_match
+    sb t2, 0(s0)
     PRINT_STR msg_picked
 
     # hide match by moving off the grid
     li t2, 255
-    sb t2, match_x
-    sb t3, match_y
+	la s0, match_x
+    sb t2, 0(s0)
+	la s0, match_y
+    sb t2, 0(s0)
 
 1:  # light the candle if on it and have a match, and not already lit
-    lbu t0, candle_lit
+    la s0, candle_lit
+	lbu t0, 0(s0)
     bnez t0, 2f
-    lbu t2, has_match
+	la s0, has_match
+    lbu t2, 0(s0)
     beqz t2, 2f
-    lbu t0, candle_x
-    lbu t1, candle_y
+	la s0, candle_x
+    lbu t0, 0(s0)
+	la s0, candle_y
+    lbu t1, 0(s0)
     bne t6, t0, 2f
-    bne t7, t1, 2f
+    bne a5, t1, 2f
     # light the candle!!!
     li t2, 1
-    sb t2, candle_lit
+	la s0, candle_lit
+    sb t2, 0(s0)
     PRINT_STR msg_lit
 
 2: j .ret
@@ -406,7 +560,8 @@ try_move_player:
     mv t3, zero
 
 .ret:
-    lw ra, sp(28)
+ 	lw s0, 24(sp)
+    lw ra, 28(sp)
     addi sp, sp, 32
     ret
 
@@ -414,16 +569,21 @@ try_move_player:
 # monster_step_towards_player -> move monster 1 step towards player
 # note: step along x if x differs, else step along y
 #------------------------------------------------------------------------------
-.globl monster_step_towards_player:
+.globl monster_step_towards_player
 
 monster_step_towards_player:
     addi sp, sp, -16 # allocate 4 spaces in stack for 4 words
     sw ra, 12(sp)
-
-    lbu t0, player_x
-    lbu t1, player_y
-    lbu t2, monster_x
-    lbu t3, monster_y
+	sw s0, 8(sp)
+	
+	la s0, player_x
+    lbu t0, 0(s0)
+	la s0, player_y
+    lbu t1, 0(s0)
+	la s0, monster_x
+    lbu t2, 0(s0)
+	la s0, monster_y
+    lbu t3, 0(s0)
 
     #dx = sign(px - mx)
     sub t4, t0, t2
@@ -446,8 +606,10 @@ monster_step_towards_player:
 4:  addi t3, t3, 1
 
 3:  # Restrict inside 0...w-1 / 0...h-1 just in case.
-    lbu t6, gridsize # width
-    lbu t7, grindsize+1 #height
+	la s0, gridsize
+    lbu t6, 0(s0) # width
+	la s0, gridsize+1
+    lbu a5, 0(s0) #height
     #check if t2 in 0...w-1
     bltz t2, 5f
     bge t2, t6, 6f
@@ -460,23 +622,26 @@ monster_step_towards_player:
 
 7: # check if t3 in 0...h-1
     bltz t3, 8f
-    bge t3, t7, 9f
+    bge t3, a5, 9f
     j 10f
 
 8:  li t3, 0
     j 10f
  
-9:  addi t3, t7, -1
+9:  addi t3, a5, -1
 
-10: sb t2, monster_x
-    sb t3, monster_y
-
-    lw ra 12(sp)
+10: la s0, monster_x
+	sb t2, 0(s0)
+	la s0, monster_y
+    sb t3, 0(s0)
+	
+	lw s0, 8(sp)
+    lw ra, 12(sp)
     addi sp, sp, 16
     ret
 
 #--------------------------------------------------------------------------------
-# check_shadow_monster_adjacency -> if |dx|+|dy| = 1, fear +=10, respawn monster
+# check_shadow_monster_adjacency -> if |dx|+|dy| <= 1, fear +=10, respawn monster
 #   and print fear message if fear >=100, the game is over and end the program
 #--------------------------------------------------------------------------------
 .globl check_shadow_monster_adjacency
@@ -484,11 +649,16 @@ monster_step_towards_player:
 check_shadow_monster_adjacency:
     addi sp, sp, -32 # allocate 8 words to be stored in stack
     sw ra, 28(sp)
-
-    lbu t0, player_x
-    lbu t1, player_y
-    lbu t2, monster_x
-    lbu t3, monster_y
+	sw s0, 24(sp)
+	
+	la s0, player_x
+    lbu t0, 0(s0)
+	la s0, player_y
+    lbu t1, 0(s0)
+	la s0, monster_x
+    lbu t2, 0(s0)
+	la s0, monster_y
+    lbu t3, 0(s0)
 
     sub t4, t0, t2 # dx
     sub t5, t1, t3 # dy
@@ -501,19 +671,20 @@ check_shadow_monster_adjacency:
 
 2:  # abs(dy)
     bltz t5, 3f
-    mv t7, t5
+    mv a5, t5
     j 4f
 
-3:  sub t7, zero, t5
+3:  sub a5, zero, t5
 
-4:  add t6, t6, t7
+4:  add t6, t6, a5 # t6 = |dx|+|dy|
     li t4, 1
-    bne t6, t4, .nohit
+    blt t4, t6, .nohit # if t6 > 1 -> nohit (else hit on 0 or 1)
 
     # fear+=10
-    lbu t0, fearFactor
+	la s0, fearFactor
+    lbu t0, 0(s0)
     addi t0, t0, 10
-    sb t0, fearFactor
+    sb t0, 0(s0)
     PRINT_STR msg_fear
 
     # is game over?
@@ -525,48 +696,61 @@ check_shadow_monster_adjacency:
     ecall
 
 5:  # respawn the monster to a new free cell
-    lbu t4, gridsize #width
-    lbu t5, gridsize+1 #height
+	la s0, gridsize
+    lbu t4, 0(s0) #width
+	la s0, gridsize+1
+    lbu t5, 0(s0) #height
 
-6:  mv t0, t4
+6:  mv a0, t4
     jal ra, rand_bounded
     mv t6, a0 # randomx
     mv a0, t5
 
     jal ra, rand_bounded
-    mv t7, a0 #random y
+    mv a5, a0 #random y
 
     # dont allow overlapping with player/candle(if unlit)/match (if not picked up)
 
     #player
-    lbu t0, player_x
-    lbu t1, player_y
+	la s0, player_x
+    lbu t0, 0(s0)
+	la s0, player_y
+    lbu t1, 0(s0)
     beq t6, t0, 6b # reloop
-    beq t7 t1, 6b
+    beq a5, t1, 6b
 
     # is candle present?
-    lbu t2, candle_lit
+	la s0, candle_lit
+    lbu t2, 0(s0)
     bnez t2, 7f
-
-    lbu t0, candle_x
-    lbu t1, candle_y
+	
+	la s0, candle_x
+    lbu t0, 0(s0)
+	la s0, candle_y
+    lbu t1, 0(s0)
     beq t6, t0, 6b
-    beq t7, t1, 6b
+    beq a5, t1, 6b
 
 7:  # is match present?
-    lbu t2, has_match
+	la s0, has_match
+    lbu t2, 0(s0)
     bnez t2, 8f
-
-    lbu t0, match_x
-    lbu t1, match_y
+	
+	la s0, match_x
+    lbu t0, 0(s0)
+	la s0, match_y
+    lbu t1, 0(s0)
     beq t6, t0, 6b
-    beq t7, t1, 6b
+    beq a5, t1, 6b
 
-8:  sb t6, monster_x
-    sb t7, monster_y
+8:  la s0, monster_x
+	sb t6, 0(s0)
+	la s0, monster_y
+    sb a5, 0(s0)
 
 .nohit:
-    lw ra sp(28)
+	lw s0, 24(sp)
+    lw ra, 28(sp)
     addi sp, sp, 32
     ret
 
@@ -577,19 +761,22 @@ check_shadow_monster_adjacency:
 .globl draw_board_and_status
 
 draw_board_and_status:
-    addi sp, sp, -48 # allocate for 12 words on stack
-    sw ra 44(sp)
-
-    lbu t0 gridsize #width
-    lbu t1 gridsize+1 #height
+    addi sp, sp, -16 # allocate for 12 words on stack
+    sw ra, 12(sp)
+	sw s0, 8(sp)
+	# dimensions
+	la s0, gridsize
+    lbu t0, 0(s0) #width
+	la s0, gridsize+1
+    lbu t1, 0(s0) #height
 
     #top border: (width+2) '#'
-    li t2, '#'
+    li a4, '#'
     addi t3, t0, 2 # count
 
 .top_loop:
     beqz t3, .top_done
-    PRINT_CHAR t2
+    PRINT_CHAR a4
     addi t3, t3, -1
     j .top_loop
 
@@ -601,8 +788,7 @@ draw_board_and_status:
 .row_loop:
     bge t4, t1, .rows_done
     # left border '#'
-    li t2 '#'
-    PRINT_CHAR t2
+    PRINT_CHAR a4
 
     li t5, 0 # x = 0...w-1
 
@@ -612,65 +798,78 @@ draw_board_and_status:
     # decide character for cell (x=t5, y=t4)
     # default '.'
     li t6, '.'
-
-    # IF candle is lit, the candle cell becomes '.' dissapears
-    lbu t7, candle_lit
-    beqz t7, 1f
-    # candle hidden
-    j 2f
-
-1:  # show candle 'C' if at (x,y)
-    lbu a1, candle_x
-    lbu a2, candle_y
-    bne t5, a1, 2f
-    bne t4, a2, 2f
+	 
+	# unlit: show candle 'C' if at (x,y)
+	la s0, candle_lit
+	lbu a5, 0(s0)
+	bnez a5, .skip_candle
+	
+	la s0, candle_x
+    lbu t2, 0(s0)
+	bne t5, t2, .skip_candle
+	
+	la s0, candle_y
+    lbu t3, 0(s0)
+    bne t4, t3, .skip_candle
+	
     li t6, 'C'
 
-2: # show match 'M' if not picked up and at (x,y)
-    lbu a1, has_match
-    bnez, a1, 3f
-
-    lbu a1, match_x
-    lbu a2, match_y
-    bne t5, a1, 3f
-    bne t4, a2, 3f
+.skip_candle: # show match 'M' if not picked up and at (x,y)
+	la s0, has_match
+	lbu a5, 0(s0)
+	bnez a5, .skip_match
+	
+	la s0, match_x
+    lbu t2, 0(s0)
+	bne t5, t2, .skip_match
+	
+	la s0, match_y
+    lbu t3, 0(s0)
+    bne t4, t3, .skip_match
+	
     li t6, 'M'
 
-3:  #show monster 'X'
-    lbu a1, monster_x
-    lbu a2, monster_y
-    bne t5, a1, 4f
-    bne t4, a2, 4f
+.skip_match:  #show monster 'X'
+	la s0, monster_x
+    lbu t2, 0(s0)
+	bne t5, t2, .skip_monster
+	
+	la s0, monster_y
+    lbu t3, 0(s0)
+    bne t4, t3, .skip_monster
+	
     li t6, 'X'
 
-4:  # show player 'P' (player overwrites another other symbol visually)
-    lbu a1, player_x
-    lbu a2, player_y
-    bne t5, a1, 5f
-    bne t4, a2, 5f
+.skip_monster:  # show player 'P' (player overwrites another other symbol visually)
+    la s0, player_x
+	lbu t2, 0(s0)
+	bne t5, t2, .emit
+
+	la s0, player_y
+    lbu t3, 0(s0)
+    bne t4, t3, .emit
+	
     li t6, 'P'
 
-5:  PRINT_CHAR t6
+.emit:  
+	PRINT_CHAR t6
     addi t5, t5, 1
     j .col_loop
 
 .row_right:
     # right border with '#'
-    li t2, '#'
-    PRINT_CHAR t2
+    PRINT_CHAR a4
     PRINT_NL
 
     addi t4, t4, 1
     j .row_loop
 
 .rows_done:
-    # bottom border
-    li t2, '#'
     addi t3, t0, 2
 
 .bottom_loop:
     beqz t3, .bottom_done
-    PRINT_CHAR t2
+    PRINT_CHAR a4
     addi t3, t3, -1
     j .bottom_loop
 
@@ -679,18 +878,21 @@ draw_board_and_status:
 
     #status line: Fear, Match, Candle
     PRINT_STR status_prefix # prints fear=
-    lbu t6, fearFactor
-    mv t7, t6
-    PRINT_INT t7
+	la s0, fearFactor
+    lbu t2, 0(s0)
+    PRINT_INT t2
 
     PRINT_STR status_mid1 # prints match=
-    lbu t6, has_match
-    PRINT_INT t6 # prints 0 or 1
+	la s0, has_match
+	lbu t2, 0(s0)
+    PRINT_INT t2 	# has_match (0/1)
 
     PRINT_STR status_mid2 # prints candle=
-    lbu t6, candle_lit
-    beqz t6, .show_unlit
-    PRINT_STR status_lit
+	la s0, candle_lit
+	lbu t2, 0(s0)
+	
+	beqz t2, .show_unlit
+	PRINT_STR status_lit
 
     j .status_end
 
@@ -699,9 +901,10 @@ draw_board_and_status:
 
 .status_end:
     PRINT_NL
-
-    lw ra, 44(sp)
-    addi sp, sp, 48
+	
+	lw s0, 8(sp)
+    lw ra, 12(sp)
+    addi sp, sp, 16
 
     ret
 
@@ -710,153 +913,59 @@ draw_board_and_status:
 # rand32 - xorshift32 (Marsaglia 2003)
 #   returns a0 = a new 32 bit random
 # -------------------------------------------------------------------------------
-.globl rand32:
+.globl rand32
 
 rand32:
-    lw t0, rand_state
-    slli t1, t0, 13
-    xor t0, t0, t1
-    srli t1, t0, 17
-    xor t0, t0, t1
-    slli t1, t0, 5
-    xor t0, t0, t1
-    sw t0, rand_state
+	la t1, rand_state
+    lw t0, 0(t1)
+    slli t2, t0, 13
+    xor t0, t0, t2
+    srli t2, t0, 17
+    xor t0, t0, t2
+    slli t2, t0, 5
+    xor t0, t0, t2
+    sw t0, 0(t1)
     mv a0, t0
     ret
 
 #---------------------------------------------------
 # rand_bounded -> a0=max -> returns a0 in [0,MAX-1]
 #---------------------------------------------------
-.globl rand_bounded:
+.globl rand_bounded
 
 rand_bounded:
     addi sp, sp, -16 # allocate space for 4 words
     sw ra, 12(sp)
 
-    mv t0, a0
-    beqz t0, .rb_done # if MAX==0, return 0 (so we dont divide by 0)
+    mv t3, a0
+    beqz t3, .rb_zero # if MAX==0, return 0 (so we dont divide by 0)
 
-1:  call rand32
-    remu a0, a0, t0 # modulus
-
+	jal ra, rand32
+    remu a0, a0, t3 # modulus
+	j .rb_done
+.rb_zero:
+	mv a0, zero
 .rb_done:
-    lw ra 12(sp)
+    lw ra, 12(sp)
     addi sp, sp, 16
     ret
 
 #-----------------------------------------------------------
 # seed_from_time - seeds the rand_state with time syscall 30
 #-----------------------------------------------------------
-.globl seed_from_time:
+.globl seed_from_time
 
 seed_from_time:
-    li a7, 30
-    ecall
-    beqz a0, 1f
-    sw a0, rand_state
+    # mix a constant with SP and RA so it isn't all-zero
+    li   t0, 0x9E3779B9       # golden ratio constant
+    mv   t1, sp
+    mv   t2, ra
+    xor  t0, t0, t1
+    xor  t0, t0, t2
+	bnez t0, 1f
+	li t0, 1
+1: 
+    la   t3, rand_state
+    sw   t0, 0(t3)
+    ret
 
-1:  ret
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# _main:
-#     # main method where we run our code sequentially
-#     li a7, 4
-#     la a0, startingPrompt
-#     ecall 
-
-
-#     li a7, 8 # read string syscall
-#     ecall
-#     mv t0, a0 # move the input to t0 for processing
-
-#     # TODO: Process the input in t0 and update the game state accordingly
-
-#     j exit
-
-# _print_board:
-#     # function to print the board at start
-#     addi sp, sp, -16 # allocate stack space for 4 integers
-#     la a0, gridsize  # load address of gridsize
-#     lw a1, 0(a0)     # load width
-#     lw a2, 1(a0)     # load height
-
-#     # TODO: Print the game board using the loaded dimensions to be constantly updated while the player moves
-    
-#     ret
-
-# # --- GAMEPLAY FUNCTIONS ---
-# move_character:
-#     # move the character based on user input of W, A, S, D and updates its current position (coordinates) 
-#     # this should run every time user inputs a move command based on keyboard input (program Loop should always be calling this function to update character position))
-#     ret
-
-# increase_fear_factor:
-#     # increase the fear factor when the character picks up an item
-#     ret
-
-# increase_match_count:
-#     # increase the match count when the character picks up a match
-#     ret
-
-
-# # messages to be printed on console
-# invalid_move_message:
-#     # print a message when the user makes an invalid move
-#     ret
-
-# increase_fear_factor_message:
-#     # print a message when the fear factor increases
-#     ret
-
-# picked_up_match_message:
-#     # print a message when the user picks up the match
-#     ret
-
-
-
-
-# exit:
-#     li a7, 10
-#     ecall
-    
-    
-# # --- HELPER FUNCTIONS ---
-# # Feel free to use, modify, or add to them however you see fit.
-     
-# # Arguments: an integer MAX in a0
-# # Return: A number from 0 (inclusive) to MAX (exclusive)
-# notrand:
-#     mv t0, a0
-#     li a7, 30
-#     ecall             # time syscall (returns milliseconds)
-#     remu a0, a0, t0   # modulus on bottom bits 
-#     li a7, 32
-#     ecall             # sleeping to try to generate a different number
-#     jr ra
