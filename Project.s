@@ -87,7 +87,7 @@ candle_lit: .byte 0
 rand_state: .word 2463534242 # default seed to use xorshift 32
 
 # UI strings
-welcome_msg: .asciz "Welcome to the Haunted house!\nYou are in a dark room. You can move using W (up), A (left), S (down), D (right).\nPress R to restart, Q to quit.\nLight the candle (C) using the match (M)\nAvoid the shadow monster (X)!\nYour fear factor increases by 10 when a shadow monster gets adjacent.\nOnce your fear factor = 100, the Game is Over\nGood luck!\n\n"
+welcome_msg: .asciz "----------------------------------------Welcome to the Haunted house!\nYou are in a dark room. You can move using W (up), A (left), S (down), D (right).\nPress R to restart, Q to quit.\n----------Objective:\n----------------------------------------Light the candle (C) using the match (M)\n----------------------------------------The Player (P) is you\nAvoid the shadow monster (X)!\nYour fear factor increases by 10 when a shadow monster gets adjacent.\nOnce your fear factor = 100, the Game is Over\nGood luck!\n----------------------------------------\n"
 status_prefix: .asciz "Status: Fear = "
 status_mid1: .asciz ", Match = "
 status_mid2: .asciz ", Candle = "
