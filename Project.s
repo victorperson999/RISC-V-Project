@@ -19,12 +19,11 @@
 # This is a small, fast RNG with a 32-bit state. Code below in `rand32`.
 # Bounded randoms use `remu` (simple modulus) for 0..MAX-1.
 #
-# ENHANCEMENTS (to be implemented next in this same file):
-# [ ] Enhancement A (Memory): Increase difficulty by supporting N matches/candles/monsters.
-# Plan: store arrays of entity positions and a count# spawn non-overlapping# render loop iterates arrays.
-# [ ] Enhancement B (Code): Light Safe Zone around a lit candle.
-# Plan: radius R (e.g., 1) blocks monster entry# track per-monster border wait# resume chase when player exits.
-# NOTE: When implemented, fill the header with (a) which enhancements, (b) labels/line refs, (c) brief how.
+# ENHANCEMENTS:
+# [complete] Enhancement A (Memory): Provide unlimited undos to the player.
+# - Allows the player to undo an unlimited number of moves in a row
+# - This would also undo a shadow monster move, put a match down if they picked one up, and unlight a candle if it got lit up.
+# [ ] Enhancement B (Code):
 # -----------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -101,6 +100,16 @@ msg_over: .asciz "Your fear reached 100. Game over\n"
 msg_restart: .asciz "Restarting game ...\n\n"
 msg_final_board: .asciz "Final board state:\n"
 msg_user_pressed_quit: .asciz "User has requested to quit (Q) the game. Thanks for playing!\n"
+
+# --- Undo ring buffer ---
+.equ STATE_SZ, 11          # 11 bytes listed above
+.equ HIST_CAP, 128         # plenty for an 8x8
+
+.align 2
+hist_top:      .word 0
+history:       .space STATE_SZ*HIST_CAP
+msg_undo:      .asciz "Undid last move.\n"
+msg_noundo:    .asciz "You've reached the start of the current game, nothing to undo.\n"
 
 #----debug
 .dbgP: .asciz "DBG P: "
@@ -258,6 +267,10 @@ init_game:
 	sb t0, 0(s0)
 	la s0, candle_lit
     sb t0, 0(s0)
+	
+	#new-> clear the undo stack head\
+	la t1, hist_top
+	sw zero, 0(t1)
 
     # width (t4), and height (t5)
 	la s0, gridsize
@@ -393,16 +406,46 @@ game_loop:
     bgt t0, t2, 1f
     addi t0, t0, -32 # to uppercase
 
-1: # handle Q/R/W/A/S/D
+1: # handle Q/R/U
     li t1, 'Q'
     beq t0, t1, .quit
+	
     li t1, 'R'
-    bne t0, t1, 2f
+    beq t0, t1, .do_restart
+	
+	li t1, 'U'
+	beq t0, t1, .do_undo
+	
+	j 2f
+	
+.do_restart:
     PRINT_STR msg_restart
     jal ra, init_game
     jal ra, draw_board_and_status
     j .loop
+	
+.do_undo:
+	jal ra, snapshot_pop_restore
+	beqz t0, .noundo
+	
+	PRINT_STR msg_undo
+	jal ra, draw_board_and_status
+	j .loop
 
+.noundo:
+	PRINT_STR msg_noundo
+	jal ra, draw_board_and_status
+	j .loop
+	
+#victory state:when candle is lit, only U/R/Q are allowed
+la t4, candle_lit
+lbu t5, 0(t4)
+beqz t5, 2f # if not lit go to handle normal movement
+
+jal ra, draw_board_and_status
+j .loop
+	
+# now we handle movement
 2: # calculate the needed (dx, dy) into s1, s2
     li s1, 0 # dx
     li s2, 0 # dy
@@ -426,21 +469,22 @@ game_loop:
     li s1, 1 # right
 
 5:  # attempt the player move
+	jal ra, snapshot_push # snapshot state before attempting the players move
+	
     jal ra, try_move_player
     beqz t3, .invalid
 	
-	# if the candle is already lit, we won, terminate program
+	# 'if the candle is already lit, we won
 	la t4, candle_lit
 	lbu t1, 0(t4)
-	beqz t1, .skip_win
+	beqz t1, .won_already
 	
 	# show the board status one more time
 	PRINT_STR msg_final_board
 	jal  ra, draw_board_and_status
-    li   a7, 10
-    ecall
+    j .loop
 
-.skip_win:
+.won_already:
     # after the player move, move monster 1 step closer
     jal ra, monster_step_towards_player
 
@@ -452,6 +496,9 @@ game_loop:
     j .loop
 
 .invalid:
+	# we pushed before trying, move failed so get rid of that snapshot
+	jal ra, snapshot_discard
+	
     PRINT_STR msg_invalid
     jal ra, draw_board_and_status
     j .loop
@@ -967,5 +1014,96 @@ seed_from_time:
 1: 
     la   t3, rand_state
     sw   t0, 0(t3)
+    ret
+
+#state history helpers:
+# push current state to history (no wrap handling shown -> use modulo)
+# a0..a2 clobbered, saves/loads with lb/sb
+snapshot_push:
+    addi sp, sp, -16
+    sw   ra, 12(sp)
+
+    la   t0, hist_top
+    lw   t1, 0(t0)                 # t1 = top
+    li   t2, STATE_SZ
+    mul  t3, t1, t2                # offset = top*STATE_SZ
+    la   t4, history
+    add  t4, t4, t3
+
+    # write bytes in a fixed order
+    la a0, player_x; lbu a1, 0(a0); sb a1, 0(t4)
+    la a0, player_y; lbu a1, 0(a0); sb a1, 1(t4)
+    la a0, match_x ; lbu a1, 0(a0); sb a1, 2(t4)
+    la a0, match_y ; lbu a1, 0(a0); sb a1, 3(t4)
+    la a0, candle_x; lbu a1, 0(a0); sb a1, 4(t4)
+    la a0, candle_y; lbu a1, 0(a0); sb a1, 5(t4)
+    la a0, monster_x; lbu a1, 0(a0); sb a1, 6(t4)
+    la a0, monster_y; lbu a1, 0(a0); sb a1, 7(t4)
+    la a0, has_match; lbu a1, 0(a0); sb a1, 8(t4)
+    la a0, candle_lit; lbu a1, 0(a0); sb a1, 9(t4)
+    la a0, fearFactor; lbu a1, 0(a0); sb a1, 10(t4)
+
+    addi t1, t1, 1
+    li   t2, HIST_CAP
+    rem  t1, t1, t2                # wrap
+    sw   t1, 0(t0)
+
+    lw ra, 12(sp)
+    addi sp, sp, 16
+    ret
+
+# undo_prepare_invalid: undo the push if move was invalid
+snapshot_discard:
+    addi sp, sp, -16
+    sw   ra, 12(sp)
+    la   t0, hist_top
+    lw   t1, 0(t0)
+    addi t1, t1, -1
+    li   t2, HIST_CAP
+    add  t1, t1, t2
+    rem  t1, t1, t2
+    sw   t1, 0(t0)
+    lw   ra, 12(sp)
+    addi sp, sp, 16
+    ret
+
+# pop & restore last state (returns t0=0 if none, 1 if restored)
+snapshot_pop_restore:
+    addi sp, sp, -16
+    sw   ra, 12(sp)
+    la   t0, hist_top
+    lw   t1, 0(t0)
+    beqz t1, .nope
+
+    addi t1, t1, -1
+    li   t2, HIST_CAP
+    add  t1, t1, t2
+    rem  t1, t1, t2
+    sw   t1, 0(t0)
+
+    li   t2, STATE_SZ
+    mul  t3, t1, t2
+    la   t4, history
+    add  t4, t4, t3
+
+    lb a1, 0(t4); la a0, player_x ; sb a1, 0(a0)
+    lb a1, 1(t4); la a0, player_y ; sb a1, 0(a0)
+    lb a1, 2(t4); la a0, match_x  ; sb a1, 0(a0)
+    lb a1, 3(t4); la a0, match_y  ; sb a1, 0(a0)
+    lb a1, 4(t4); la a0, candle_x ; sb a1, 0(a0)
+    lb a1, 5(t4); la a0, candle_y ; sb a1, 0(a0)
+    lb a1, 6(t4); la a0, monster_x; sb a1, 0(a0)
+    lb a1, 7(t4); la a0, monster_y; sb a1, 0(a0)
+    lb a1, 8(t4); la a0, has_match; sb a1, 0(a0)
+    lb a1, 9(t4); la a0, candle_lit; sb a1, 0(a0)
+    lb a1, 10(t4); la a0, fearFactor; sb a1, 0(a0)
+
+    li t0, 1
+    j .done
+.nope:
+    li t0, 0
+.done:
+    lw ra, 12(sp)
+    addi sp, sp, 16
     ret
 
