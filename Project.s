@@ -23,7 +23,10 @@
 # [complete] Enhancement A (Memory): Provide unlimited undos to the player.
 # - Allows the player to undo an unlimited number of moves in a row
 # - This would also undo a shadow monster move, put a match down if they picked one up, and unlight a candle if it got lit up.
-# [ ] Enhancement B (Code):
+# [complete] Enhancement B (Memory): A multi-player (competitive) mode
+# - program should prompt for the number of players prior to starting the game
+# - Each player should be given a chance to play the same map each round
+# - The program should track the fear gauge each player had at the end of their round and should display the cumulative standings (ordered by fear gauge) as a single leaderboard after the entire round is complete
 # -----------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -86,7 +89,7 @@ candle_lit: .byte 0
 rand_state: .word 2463534242 # default seed to use xorshift 32
 
 # UI strings
-welcome_msg: .asciz "----------------------------------------Welcome to the Haunted house!\nYou are in a dark room. You can move using W (up), A (left), S (down), D (right).\nPress R to restart, Q to quit.\n----------Objective:\n----------------------------------------Light the candle (C) using the match (M)\n----------------------------------------The Player (P) is you\nAvoid the shadow monster (X)!\nYour fear factor increases by 10 when a shadow monster gets adjacent.\nOnce your fear factor = 100, the Game is Over\nGood luck!\n----------------------------------------\n"
+welcome_msg: .asciz "----------------------------------------Welcome to the Haunted house!\nYou are in a dark room. You can move using W (up), A (left), S (down), D (right).\nPress R to restart (same map), N for a new map, Q to quit.\n----------Objective:\n----------------------------------------Light the candle (C) using the match (M)\n----------------------------------------The Player (P) is you\nAvoid the shadow monster (X)!\nYour fear factor increases by 10 when a shadow monster gets adjacent.\nOnce your fear factor = 100, the Game is Over\nGood luck!\n----------------------------------------\n"
 status_prefix: .asciz "Status: Fear = "
 status_mid1: .asciz ", Match = "
 status_mid2: .asciz ", Candle = "
@@ -100,9 +103,11 @@ msg_over: .asciz "Your fear reached 100. Game over\n"
 msg_restart: .asciz "Restarting game ...\n\n"
 msg_final_board: .asciz "Final board state:\n"
 msg_user_pressed_quit: .asciz "User has requested to quit (Q) the game. Thanks for playing!\n"
+msg_newmap: .asciz "Starting a new map ...\n\n"
+msg_restart_same: .asciz "Restarting same map ...\n\n"
 
 # --- Undo ring buffer ---
-.equ STATE_SZ, 11          # 11 bytes listed above
+.equ STATE_SZ, 12          # 12 bytes listed above
 .equ HIST_CAP, 128         # plenty for an 8x8
 
 .align 2
@@ -110,6 +115,33 @@ hist_top:      .word 0
 history:       .space STATE_SZ*HIST_CAP
 msg_undo:      .asciz "Undid last move.\n"
 msg_noundo:    .asciz "You've reached the start of the current game, nothing to undo.\n"
+
+# potential multiplayer stuff
+seed_state: .space 11      # same size/order as STATE_SZ snapshot
+.align 2
+level_seed: .word 0
+
+# ----- multi-player config & state -----
+.equ MAX_PLAYERS, 8           # you can raise this later
+
+players_count: .byte 1        # set at runtime
+scores:        .space MAX_PLAYERS   # fear at end of each player's round
+order_idx:     .space MAX_PLAYERS   # index list for sorting/printing
+
+# round-finished flag (win OR fear-100); lets game_loop return instead of exiting
+round_over:    .byte 0
+
+# --- messages ---
+prompt_players_str:   .asciz "How many players? (1-8): "
+msg_player_turn1: .asciz "\n--- Player "
+msg_player_turn2: .asciz " turn ---\n"
+msg_leaderboard:  .asciz "==Leaderboard (by fear, low->high)==\n"
+msg_rank_sep:     .asciz ": Player "
+msg_fear_sep:     .asciz "  Fear = "
+msg_next_turn: .asciz "Press any key to go to the next player's turn\n"
+msg_all_turns_done: .asciz "\nPress any key to end the game...\n"
+msg_end_turn_hint: .asciz "Press any key to finish your turn (or R=restart same map, N=new map, U=undo, Q=quit)...\n"
+#--end of multiplayer stuff--------
 
 #----debug
 .dbgP: .asciz "DBG P: "
@@ -126,9 +158,6 @@ ch_buf: .byte 0
 _start:
 	j main
 main:
-	li t0, '>'
-    PRINT_CHAR t0
-    PRINT_NL
     # TODO: Generate locations for the character, match, stick, and shadow monster.
 	# Static locations in memory have been provided for the (x, y) coordinates 
     # of each of these elements.
@@ -166,81 +195,14 @@ main:
     addi sp, sp, -16 # 4 spaces on stack
     sw ra, 12(sp)
     jal ra, seed_from_time
-    jal ra, init_game
-	
-	# ---------- DEBUG DUMP (remove after fixing) ----------
-    PRINT_STR status_prefix
-    la   t2, fearFactor
-    lbu  t0, 0(t2)
-    PRINT_INT t0
-
-    PRINT_STR status_mid1
-    la   t2, has_match
-    lbu  t0, 0(t2)
-    PRINT_INT t0
-
-    PRINT_STR status_mid2
-    la   t2, candle_lit
-    lbu  t0, 0(t2)
-    beqz t0, 1f
-    PRINT_STR status_lit
-    j    2f
-1:  PRINT_STR status_unlit
-2:  PRINT_NL
-
-    # P(x y)
-    PRINT_STR .dbgP
-    la   t2, player_x
-    lbu  t0, 0(t2)
-    PRINT_INT t0
-    li   t3, ' '
-    PRINT_CHAR t3
-    la   t2, player_y
-    lbu  t0, 0(t2)
-    PRINT_INT t0
-    PRINT_NL
-
-    # M(x y)
-    PRINT_STR .dbgM
-    la   t2, match_x
-    lbu  t0, 0(t2)
-    PRINT_INT t0
-    li   t3, ' '
-    PRINT_CHAR t3
-    la   t2, match_y
-    lbu  t0, 0(t2)
-    PRINT_INT t0
-    PRINT_NL
-
-    # C(x y)
-    PRINT_STR .dbgC
-    la   t2, candle_x
-    lbu  t0, 0(t2)
-    PRINT_INT t0
-    li   t3, ' '
-    PRINT_CHAR t3
-    la   t2, candle_y
-    lbu  t0, 0(t2)
-    PRINT_INT t0
-    PRINT_NL
-
-    # X(x y)
-    PRINT_STR .dbgX
-    la   t2, monster_x
-    lbu  t0, 0(t2)
-    PRINT_INT t0
-    li   t3, ' '
-    PRINT_CHAR t3
-    la   t2, monster_y
-    lbu  t0, 0(t2)
-    PRINT_INT t0
-    PRINT_NL
-    PRINT_NL
-    # ------------------------------------------------------
+	jal ra, save_rng_seed
     PRINT_STR welcome_msg
-    jal ra, draw_board_and_status
-    jal ra, game_loop
-
+    jal ra, prompt_players
+	jal ra, run_round #### important
+    jal ra, print_leaderboard
+	
+	PRINT_STR msg_all_turns_done
+	READ_CHAR t0
     # on return we exit
     lw ra, 12(sp)
     addi sp, sp, 16
@@ -267,6 +229,10 @@ init_game:
 	sb t0, 0(s0)
 	la s0, candle_lit
     sb t0, 0(s0)
+	
+	# reset round finished flag
+	la s0, round_over
+	sb zero, 0(s0)
 	
 	#new-> clear the undo stack head\
 	la t1, hist_top
@@ -406,23 +372,35 @@ game_loop:
     bgt t0, t2, 1f
     addi t0, t0, -32 # to uppercase
 
-1: # handle Q/R/U
+1: # handle Q/R/U/N
     li t1, 'Q'
     beq t0, t1, .quit
 	
     li t1, 'R'
-    beq t0, t1, .do_restart
+    beq t0, t1, .do_restart_same # restart same map
+	
+	li t1, 'N'
+	beq t0, t1, .do_new_map # restart random new map
 	
 	li t1, 'U'
 	beq t0, t1, .do_undo
 	
-	j 2f
+	j .after_ctrl
 	
-.do_restart:
-    PRINT_STR msg_restart
+.do_restart_same:
+    PRINT_STR msg_restart_same
+	jal ra, restore_rng_seed
     jal ra, init_game
     jal ra, draw_board_and_status
     j .loop
+
+.do_new_map:
+	PRINT_STR msg_newmap
+	jal ra, seed_from_time
+	jal ra, save_rng_seed
+	jal ra, init_game
+	jal ra, draw_board_and_status
+	j .loop
 	
 .do_undo:
 	jal ra, snapshot_pop_restore
@@ -436,15 +414,19 @@ game_loop:
 	PRINT_STR msg_noundo
 	jal ra, draw_board_and_status
 	j .loop
-	
-#victory state:when candle is lit, only U/R/Q are allowed
-la t4, candle_lit
-lbu t5, 0(t4)
-beqz t5, 2f # if not lit go to handle normal movement
 
-jal ra, draw_board_and_status
-j .loop
+.after_ctrl:
+	# if round is already over (dead) or candle lit (win),
+	# return to run_round unless the key was q,r,n,u
+	la t4, round_over
+	lbu t5, 0(t4)
+	bnez t5, .finish_round
 	
+	la t4, candle_lit
+	lbu t5, 0(t4)
+	bnez t5, .finish_round
+	# fall through to movement
+
 # now we handle movement
 2: # calculate the needed (dx, dy) into s1, s2
     li s1, 0 # dx
@@ -477,24 +459,30 @@ j .loop
 	# 'if the candle is already lit, we won
 	la t4, candle_lit
 	lbu t1, 0(t4)
-	beqz t1, .won_already
+	bnez t1, .finish_after_win
 	
-	# show the board status one more time
-	PRINT_STR msg_final_board
+	# otherwise continue, monster moves and continue
+	jal ra, monster_step_towards_player
+	jal ra, check_shadow_monster_adjacency
+	
+	# redraw and keep playing
 	jal  ra, draw_board_and_status
     j .loop
 
-.won_already:
-    # after the player move, move monster 1 step closer
-    jal ra, monster_step_towards_player
-
-    # after moster moves, check if next to player, add 10 to fear factor and respawn
-    jal ra, check_shadow_monster_adjacency
-
+.finish_after_win:
+	PRINT_STR msg_final_board
     # after updates, redraw the board
     jal ra, draw_board_and_status
+	PRINT_STR msg_end_turn_hint
     j .loop
-
+	
+.finish_round:
+	lw s2, 36(sp)
+	lw s1, 40(sp)
+    lw ra, 44(sp)
+    addi sp, sp, 48
+    ret
+	
 .invalid:
 	# we pushed before trying, move failed so get rid of that snapshot
 	jal ra, snapshot_discard
@@ -738,9 +726,14 @@ check_shadow_monster_adjacency:
     li t1, 100
     blt t0, t1, 5f
     PRINT_STR msg_over
-    # a clean exit
-    li a7, 10
-    ecall
+    # mark_round_complete; game loop will return to the round controller
+	la s0, round_over
+	li t2, 1
+	sb t2, 0(s0)
+	
+	PRINT_STR msg_end_turn_hint
+	
+	j .nohit
 
 5:  # respawn the monster to a new free cell
 	la s0, gridsize
@@ -1042,7 +1035,8 @@ snapshot_push:
     la a0, has_match; lbu a1, 0(a0); sb a1, 8(t4)
     la a0, candle_lit; lbu a1, 0(a0); sb a1, 9(t4)
     la a0, fearFactor; lbu a1, 0(a0); sb a1, 10(t4)
-
+	la a0, round_over; lbu a1, 0(a0); sb a1, 11(t4)
+	
     addi t1, t1, 1
     li   t2, HIST_CAP
     rem  t1, t1, t2                # wrap
@@ -1097,6 +1091,7 @@ snapshot_pop_restore:
     lb a1, 8(t4); la a0, has_match; sb a1, 0(a0)
     lb a1, 9(t4); la a0, candle_lit; sb a1, 0(a0)
     lb a1, 10(t4); la a0, fearFactor; sb a1, 0(a0)
+	lb a1, 11(t4); la a0, round_over;  sb a1, 0(a0)
 
     li t0, 1
     j .done
@@ -1107,3 +1102,242 @@ snapshot_pop_restore:
     addi sp, sp, 16
     ret
 
+# Save current state into seed_state (same 11-byte order as snapshots)
+.globl save_seed_state
+save_seed_state:
+    la t4, seed_state
+    la a0, player_x ; lbu a1,0(a0); sb a1, 0(t4)
+    la a0, player_y ; lbu a1,0(a0); sb a1, 1(t4)
+    la a0, match_x  ; lbu a1,0(a0); sb a1, 2(t4)
+    la a0, match_y  ; lbu a1,0(a0); sb a1, 3(t4)
+    la a0, candle_x ; lbu a1,0(a0); sb a1, 4(t4)
+    la a0, candle_y ; lbu a1,0(a0); sb a1, 5(t4)
+    la a0, monster_x; lbu a1,0(a0); sb a1, 6(t4)
+    la a0, monster_y; lbu a1,0(a0); sb a1, 7(t4)
+    la a0, has_match; lbu a1,0(a0); sb a1, 8(t4)
+    la a0, candle_lit; lbu a1,0(a0); sb a1, 9(t4)
+    la a0, fearFactor; lbu a1,0(a0); sb a1,10(t4)
+    ret
+
+# Restore seed_state back into live state
+.globl restore_seed_state
+restore_seed_state:
+    la t4, seed_state
+    lb a1, 0(t4); la a0, player_x ; sb a1,0(a0)
+    lb a1, 1(t4); la a0, player_y ; sb a1,0(a0)
+    lb a1, 2(t4); la a0, match_x  ; sb a1,0(a0)
+    lb a1, 3(t4); la a0, match_y  ; sb a1,0(a0)
+    lb a1, 4(t4); la a0, candle_x ; sb a1,0(a0)
+    lb a1, 5(t4); la a0, candle_y ; sb a1,0(a0)
+    lb a1, 6(t4); la a0, monster_x; sb a1,0(a0)
+    lb a1, 7(t4); la a0, monster_y; sb a1,0(a0)
+    lb a1, 8(t4); la a0, has_match; sb a1,0(a0)
+    lb a1, 9(t4); la a0, candle_lit; sb a1,0(a0)
+    lb a1,10(t4); la a0, fearFactor; sb a1,0(a0)
+    ret
+
+# Save current RNG state as the map seed
+.globl save_rng_seed
+save_rng_seed:
+    la  t0, rand_state
+    lw  t1, 0(t0)
+    la  t2, level_seed
+    sw  t1, 0(t2)
+    ret
+
+# Restore RNG state from the saved map seed
+.globl restore_rng_seed
+restore_rng_seed:
+    la  t2, level_seed
+    lw  t1, 0(t2)
+    la  t0, rand_state
+    sw  t1, 0(t0)
+    ret
+
+.globl prompt_players
+prompt_players:
+    addi sp, sp, -16
+    sw   ra, 12(sp)
+.read_again:
+    PRINT_STR prompt_players_str
+    READ_CHAR t0
+    # newline for tidiness
+    li a0, 13; li a7, 11; ecall
+    li a0, 10; li a7, 11; ecall
+    # accept '1'..'8'
+    li  t1, '1'
+    blt t0, t1, .read_again
+    li  t1, 48        # '0'
+    addi t1, t1, MAX_PLAYERS   # '0'+MAX_PLAYERS
+    bgt t0, t1, .read_again
+    # store players_count = digit - '0'
+    li  t1, '0'
+    sub t0, t0, t1
+    la  t2, players_count
+    sb  t0, 0(t2)
+    lw   ra, 12(sp)
+    addi sp, sp, 16
+    ret
+
+.globl run_round
+run_round:
+    addi sp, sp, -28
+    sw   ra, 24(sp)
+    sw   s0, 20(sp)          # i
+    sw   s1, 16(sp)          # n (players_count), preserved across calls
+    sw   s2, 12(sp)
+
+    # load and preserve n
+    la   t0, players_count
+    lbu  t1, 0(t0)
+    mv   s1, t1              # s1 = n
+
+    # init order_idx[i] = i
+    li   s0, 0
+1:  bge  s0, s1, 2f
+    la   t2, order_idx
+    add  t3, t2, s0
+    sb   s0, 0(t3)
+    addi s0, s0, 1
+    j    1b
+2:
+    li   s0, 0              # i = 0
+.round_loop:
+    bge  s0, s1, .done_rounds
+
+    # --- banner ---
+    PRINT_STR msg_player_turn1
+    mv   t3, s0
+    addi t3, t3, 1
+    PRINT_INT t3
+    PRINT_STR msg_player_turn2
+
+    # --- same map for everyone ---
+    jal  ra, restore_rng_seed
+    jal  ra, init_game
+    jal  ra, draw_board_and_status
+
+    # play until win or death (game_loop returns)
+    jal  ra, game_loop
+
+    # record fear score
+    la   t4, fearFactor
+    lbu  t5, 0(t4)
+    la   t6, scores
+    add  t6, t6, s0
+    sb   t5, 0(t6)
+	
+	 # ---- Only show "next player" prompt if this isn't the last player ----
+    addi t3, s1, -1          # last index = n-1
+    beq  s0, t3, .skip_next_prompt
+
+    PRINT_STR msg_next_turn
+    READ_CHAR t0              # wait for any key
+	
+.skip_next_prompt:
+    addi s0, s0, 1
+    j    .round_loop
+
+.done_rounds:
+    lw   s2, 12(sp)
+    lw   s1, 16(sp)
+    lw   s0, 20(sp)
+    lw   ra, 24(sp)
+    addi sp, sp, 28
+    ret
+
+
+.globl print_leaderboard
+print_leaderboard:
+    addi sp, sp, -28
+    sw   ra, 24(sp)
+    sw   s0, 20(sp)
+    sw   s1, 16(sp)
+    sw   s2, 12(sp)
+
+    la   t0, players_count
+    lbu  t1, 0(t0)          # n
+
+    PRINT_STR msg_leaderboard
+
+    li   s0, 0              # i
+.lb_outer:
+    bge  s0, t1, .lb_done
+    mv   s1, s0             # minIdx = i
+    addi s2, s0, 1          # j = i+1
+.lb_inner:
+    bge  s2, t1, .lb_after_inner
+
+    # idx_j  = order_idx[j]
+    la   t2, order_idx
+    add  t3, t2, s2
+    lbu  t4, 0(t3)
+
+    # idx_min = order_idx[minIdx]
+    la   t2, order_idx
+    add  t3, t2, s1
+    lbu  t5, 0(t3)
+
+    # score_j  = scores[idx_j]
+    la   t6, scores
+    add  t6, t6, t4
+    lbu  a0, 0(t6)
+
+    # score_min = scores[idx_min]
+    la   t6, scores
+    add  t6, t6, t5
+    lbu  a1, 0(t6)
+
+    blt  a0, a1, .lb_set_min
+    j    .lb_cont_inner
+.lb_set_min:
+    mv   s1, s2
+.lb_cont_inner:
+    addi s2, s2, 1
+    j    .lb_inner
+
+.lb_after_inner:
+    # swap order_idx[i] <-> order_idx[minIdx]
+    beq  s1, s0, .lb_no_swap
+    la   t2, order_idx
+    add  t3, t2, s0
+    lbu  t4, 0(t3)                # tmp = order[i]
+    la   t2, order_idx
+    add  a2, t2, s1               # second pointer in a2 (legal)
+    lbu  a3, 0(a2)                # order[min]
+    sb   a3, 0(t3)                # order[i] = order[min]
+    sb   t4, 0(a2)                # order[min] = tmp
+.lb_no_swap:
+
+    # print: "<rank>: Player <idx+1>  Fear = <score>"
+    addi a3, s0, 1                # rank = i+1
+    PRINT_INT a3
+    PRINT_STR msg_rank_sep
+
+    la   t2, order_idx
+    add  t3, t2, s0
+    lbu  t4, 0(t3)
+    addi t4, t4, 1                # player index + 1
+    PRINT_INT t4
+
+    PRINT_STR msg_fear_sep
+
+    la   t2, order_idx
+    add  t3, t2, s0
+    lbu  t4, 0(t3)
+    la   t6, scores
+    add  t6, t6, t4
+    lbu  a0, 0(t6)
+    PRINT_INT a0
+    PRINT_NL
+
+    addi s0, s0, 1
+    j    .lb_outer
+
+.lb_done:
+    lw   s2, 12(sp)
+    lw   s1, 16(sp)
+    lw   s0, 20(sp)
+    lw   ra, 24(sp)
+    addi sp, sp, 28
+    ret
